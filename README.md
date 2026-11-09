@@ -127,7 +127,7 @@ When `hermes cron run` executes in a separate process from `hermes gateway`, the
 git clone https://github.com/tin-computer/hermes-imessage.git
 cd hermes-imessage
 pip install -e ".[dev]"
-pytest tests/                              # 43 unit tests, ~9s
+pytest tests/                              # 45 unit tests, ~9s
 ```
 
 Live smoke test against the production service (needs a real API key):

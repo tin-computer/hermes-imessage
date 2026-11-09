@@ -39,6 +39,7 @@ def apply_yaml_config(yaml_cfg, platform_cfg) -> Optional[Dict[str, Any]]:
     if not isinstance(yaml_cfg, dict):
         return None
 
+    set_env = _yaml_env_setter()
     extra: Dict[str, Any] = {}
     yaml_to_env = {
         "api_key": "CLAW_MESSENGER_API_KEY",
@@ -58,10 +59,24 @@ def apply_yaml_config(yaml_cfg, platform_cfg) -> Optional[Dict[str, Any]]:
             val = ",".join(str(x) for x in val)
         elif isinstance(val, bool):
             val = "true" if val else "false"
-        if not env(env_name):  # env > YAML
-            os.environ[env_name] = str(val)
+        set_env(env_name, val)
         extra[yaml_key] = val
     return extra or None
+
+
+def _yaml_env_setter():
+    """Hermes's YAML-to-env writer: explicit env wins, and nothing is written while a
+    multiplexed secondary profile's config loads (that would hand its API key to the
+    default profile). The values still go into ``extra``, so each profile's adapter
+    reads its own. Outside Hermes, write only unset vars."""
+    try:
+        from gateway.platforms._shared import yaml_env_setter
+    except ImportError:
+        def set_env(name: str, value: Any) -> None:
+            if not os.getenv(name):
+                os.environ[name] = str(value)
+        return set_env
+    return yaml_env_setter()
 
 
 def interactive_setup(*args, **kwargs) -> bool:
