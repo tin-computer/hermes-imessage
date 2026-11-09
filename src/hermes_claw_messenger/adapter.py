@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
+import weakref
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -32,6 +32,7 @@ from .outbound import (
     looks_like_e164,
     normalize_e164,
 )
+from ._env import env
 from .ws_client import NO_RECONNECT_CODES, WsClient
 
 logger = logging.getLogger(__name__)
@@ -64,9 +65,32 @@ def check_requirements() -> bool:
 
 def validate_config(config: PlatformConfig) -> bool:
     """Called before adapter construction. Requires an API key in the env."""
-    api_key = os.getenv("CLAW_MESSENGER_API_KEY")
+    api_key = env("CLAW_MESSENGER_API_KEY")
     extra = getattr(config, "extra", {}) or {}
     return bool(api_key or extra.get("api_key"))
+
+
+# The adapters Hermes's gateway is running, keyed by Hermes profile, so the
+# agent tool reaches its own profile's connection without Hermes internals.
+# Under gateway.multiplex_profiles each profile has its own adapter and API key;
+# a tool call must never borrow another profile's. Set on connect, cleared on
+# disconnect.
+_running: "Dict[Optional[str], weakref.ref[ClawMessengerAdapter]]" = {}
+
+
+def _profile_key() -> Optional[str]:
+    """The Hermes profile home in the current context (None when not multiplexed)."""
+    try:
+        from agent.secret_scope import current_secret_scope_home
+    except ImportError:
+        return None
+    return current_secret_scope_home()
+
+
+def running_adapter() -> "Optional[ClawMessengerAdapter]":
+    """The connected adapter for the calling profile, or None."""
+    ref = _running.get(_profile_key())
+    return ref() if ref is not None else None
 
 
 class ClawMessengerAdapter(BasePlatformAdapter):
@@ -80,13 +104,15 @@ class ClawMessengerAdapter(BasePlatformAdapter):
 
         extra = getattr(config, "extra", {}) or {}
 
-        self.api_key: str = os.getenv("CLAW_MESSENGER_API_KEY") or str(extra.get("api_key") or "")
+        # Built inside its profile's secret scope, like the API key read below.
+        self._profile: Optional[str] = _profile_key()
+        self.api_key: str = env("CLAW_MESSENGER_API_KEY") or str(extra.get("api_key") or "")
         self.server_url: str = (
-            os.getenv("CLAW_MESSENGER_SERVER_URL")
+            env("CLAW_MESSENGER_SERVER_URL")
             or str(extra.get("server_url") or DEFAULT_SERVER_URL)
         )
         self.preferred_service: str = (
-            os.getenv("CLAW_MESSENGER_PREFERRED_SERVICE")
+            env("CLAW_MESSENGER_PREFERRED_SERVICE")
             or str(extra.get("preferred_service") or DEFAULT_PREFERRED_SERVICE)
         )
 
@@ -141,9 +167,13 @@ class ClawMessengerAdapter(BasePlatformAdapter):
             )
             await self.disconnect()
             return False
+        _running[self._profile] = weakref.ref(self)
         return True
 
     async def disconnect(self) -> None:
+        ref = _running.get(self._profile)
+        if ref is not None and ref() is self:
+            del _running[self._profile]
         if self._ws is not None:
             try:
                 await self._ws.stop()

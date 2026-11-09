@@ -86,3 +86,44 @@ async def test_create_group_no_running_adapter(patch_runner):
     payload = json.loads(out)
     assert payload["ok"] is False
     assert "not running" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_tool_finds_the_connected_adapter_without_hermes_internals(fake_server, make_adapter):
+    assert cm_tools._get_running_adapter() is None
+    async with fake_server() as srv:
+        adapter = make_adapter(server_url=srv.url)
+        assert await adapter.connect() is True
+        try:
+            assert cm_tools._get_running_adapter() is adapter
+        finally:
+            await adapter.disconnect()
+    assert cm_tools._get_running_adapter() is None
+
+
+@pytest.mark.asyncio
+async def test_tool_never_borrows_another_profiles_adapter(fake_server, make_adapter):
+    """Under profile multiplexing each profile's tool call sees only its own connection."""
+    from agent.secret_scope import reset_secret_scope, set_secret_scope
+
+    async with fake_server() as srv:
+        token = set_secret_scope({"CLAW_MESSENGER_API_KEY": "cm_live_A"}, profile_home="/profiles/a")
+        try:
+            adapter_a = make_adapter(server_url=srv.url)
+            assert await adapter_a.connect() is True
+            assert cm_tools._get_running_adapter() is adapter_a
+        finally:
+            reset_secret_scope(token)
+        try:
+            token = set_secret_scope({}, profile_home="/profiles/b")
+            try:
+                assert cm_tools._get_running_adapter() is None
+            finally:
+                reset_secret_scope(token)
+            assert cm_tools._get_running_adapter() is None  # unscoped caller
+        finally:
+            token = set_secret_scope({}, profile_home="/profiles/a")
+            try:
+                await adapter_a.disconnect()
+            finally:
+                reset_secret_scope(token)

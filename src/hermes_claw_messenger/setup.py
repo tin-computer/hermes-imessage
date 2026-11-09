@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
+from ._env import env
+
 
 DEFAULT_SERVER_URL = "wss://claw-messenger.onrender.com"
 DEFAULT_PREFERRED_SERVICE = "iMessage"
@@ -17,15 +19,15 @@ def env_enablement() -> Optional[Dict[str, Any]]:
     dict makes the plugin show up in ``hermes gateway status`` without
     instantiating the adapter.
     """
-    if not os.getenv("CLAW_MESSENGER_API_KEY"):
+    if not env("CLAW_MESSENGER_API_KEY"):
         return None
     extra: Dict[str, Any] = {
-        "server_url": os.getenv("CLAW_MESSENGER_SERVER_URL", DEFAULT_SERVER_URL),
-        "preferred_service": os.getenv(
+        "server_url": env("CLAW_MESSENGER_SERVER_URL", DEFAULT_SERVER_URL),
+        "preferred_service": env(
             "CLAW_MESSENGER_PREFERRED_SERVICE", DEFAULT_PREFERRED_SERVICE
         ),
     }
-    home_channel_id = os.getenv("CLAW_MESSENGER_HOME_CHANNEL")
+    home_channel_id = env("CLAW_MESSENGER_HOME_CHANNEL")
     result: Dict[str, Any] = {"extra": extra}
     if home_channel_id:
         result["home_channel"] = {"chat_id": home_channel_id}
@@ -37,6 +39,7 @@ def apply_yaml_config(yaml_cfg, platform_cfg) -> Optional[Dict[str, Any]]:
     if not isinstance(yaml_cfg, dict):
         return None
 
+    set_env = _yaml_env_setter()
     extra: Dict[str, Any] = {}
     yaml_to_env = {
         "api_key": "CLAW_MESSENGER_API_KEY",
@@ -56,10 +59,24 @@ def apply_yaml_config(yaml_cfg, platform_cfg) -> Optional[Dict[str, Any]]:
             val = ",".join(str(x) for x in val)
         elif isinstance(val, bool):
             val = "true" if val else "false"
-        if not os.getenv(env_name):  # env > YAML
-            os.environ[env_name] = str(val)
+        set_env(env_name, val)
         extra[yaml_key] = val
     return extra or None
+
+
+def _yaml_env_setter():
+    """Hermes's YAML-to-env writer: explicit env wins, and nothing is written while a
+    multiplexed secondary profile's config loads (that would hand its API key to the
+    default profile). The values still go into ``extra``, so each profile's adapter
+    reads its own. Outside Hermes, write only unset vars."""
+    try:
+        from gateway.platforms._shared import yaml_env_setter
+    except ImportError:
+        def set_env(name: str, value: Any) -> None:
+            if not os.getenv(name):
+                os.environ[name] = str(value)
+        return set_env
+    return yaml_env_setter()
 
 
 def interactive_setup(*args, **kwargs) -> bool:
@@ -96,15 +113,18 @@ def interactive_setup(*args, **kwargs) -> bool:
     except (EOFError, KeyboardInterrupt):
         return False
 
-    if env_path is None:
-        from pathlib import Path
-        env_path = Path.home() / ".hermes" / ".env"
-
-    _append_env_lines(env_path, {
+    values = {
         "CLAW_MESSENGER_API_KEY": api_key,
         "CLAW_MESSENGER_PREFERRED_SERVICE": service,
         **({"CLAW_MESSENGER_HOME_CHANNEL": home} if home else {}),
-    })
+    }
+    if env_path is None:
+        # Hermes owns ~/.hermes/.env (profiles, export lines, write guards).
+        from hermes_cli.config import save_env_value
+        for key, value in values.items():
+            save_env_value(key, value)
+    else:
+        _append_env_lines(env_path, values)
     out("[green]✓ Claw Messenger configured.[/green]")
     out("[dim]Next: register phone numbers via the dashboard or the /api/phone-routes endpoint.[/dim]")
     return True

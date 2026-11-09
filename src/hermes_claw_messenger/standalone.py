@@ -7,9 +7,9 @@ caller's process (e.g. ``hermes cron run`` as a separate process).
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
+from ._env import env
 from .outbound import build_send_payload
 from .ws_client import WsClient
 
@@ -29,15 +29,15 @@ async def standalone_send(
 ) -> Dict[str, Any]:
     """Connect, send a single message, close. Returns the send-tool result envelope."""
     extra = getattr(pconfig, "extra", None) or {}
-    api_key = os.getenv("CLAW_MESSENGER_API_KEY") or str(extra.get("api_key") or "")
+    api_key = env("CLAW_MESSENGER_API_KEY") or str(extra.get("api_key") or "")
     if not api_key:
         return {"error": "CLAW_MESSENGER_API_KEY is not set"}
     server_url = (
-        os.getenv("CLAW_MESSENGER_SERVER_URL")
+        env("CLAW_MESSENGER_SERVER_URL")
         or str(extra.get("server_url") or DEFAULT_SERVER_URL)
     )
     preferred_service = (
-        os.getenv("CLAW_MESSENGER_PREFERRED_SERVICE")
+        env("CLAW_MESSENGER_PREFERRED_SERVICE")
         or str(extra.get("preferred_service") or "iMessage")
     )
 

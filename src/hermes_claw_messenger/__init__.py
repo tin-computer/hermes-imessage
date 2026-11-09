@@ -10,7 +10,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.0"
+__version__ = "0.1.4"
 
 
 def register(ctx) -> None:
@@ -48,7 +48,7 @@ def register(ctx) -> None:
         check_fn=check_requirements,
         validate_config=validate_config,
         required_env=["CLAW_MESSENGER_API_KEY"],
-        install_hint="pip install hermes-claw-messenger",
+        install_hint="hermes plugins install claw-messenger",
         setup_fn=interactive_setup,
         env_enablement_fn=env_enablement,
         apply_yaml_config_fn=apply_yaml_config,

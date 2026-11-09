@@ -1,16 +1,38 @@
 # hermes-imessage
 
-iMessage, RCS, and SMS for [Hermes Agent](https://hermes-agent.nousresearch.com/). No Mac required, no SIM required. Powered by the [Claw Messenger](https://clawmessenger.com) relay.
+iMessage, RCS and SMS for [Hermes Agent](https://hermes-agent.nousresearch.com/), through [Claw Messenger](https://www.clawmessenger.com). No Mac and no SIM required: Hermes can run on Linux, in Docker or on a VPS.
 
 Your Hermes agent can:
 
-- Receive iMessages / RCS / SMS sent to your Claw Messenger number.
-- Reply back as your number.
-- Send to one-on-one chats (DMs) and existing group chats.
-- Create new group chats by calling the `claw_messenger_create_group` tool.
-- Receive image / video / audio / document attachments — they land as cached local files the agent's vision tools can read.
+- Receive iMessages, RCS and SMS sent to your Claw Messenger number.
+- Reply from that number, with iMessage first and RCS or SMS when the recipient can't get iMessage.
+- Send to one-on-one chats and existing group chats.
+- Create new group chats with the `claw_messenger_create_group` tool (Growth plan and above).
+- Receive image, video, audio and document attachments as local files the agent's vision tools can read.
 
-## Quick start
+You need a Claw Messenger account and API key. Plans and limits are on the [pricing page](https://www.clawmessenger.com/pricing); first-time customers get a 7-day trial (card required).
+
+## Install from the Hermes plugin catalog
+
+```bash
+hermes plugins install claw-messenger --enable
+hermes gateway setup        # pick Claw Messenger, paste your API key
+hermes gateway start
+```
+
+Get the API key from the [dashboard](https://www.clawmessenger.com/dashboard), then register the phone numbers that may text your agent there. Messages from numbers you haven't registered don't reach it.
+
+To let the agent start new group chats, enable the toolset and map it onto the platform:
+
+```bash
+hermes tools enable hermes-claw-messenger
+# then in ~/.hermes/config.yaml (merge with existing entries):
+#   platform_toolsets:
+#     claw_messenger:
+#       - hermes-claw-messenger
+```
+
+## Install with pip (alternative)
 
 ```bash
 # 1. Install into the Hermes venv.
@@ -55,7 +77,7 @@ All settings can be supplied via environment variables (preferred) or `~/.hermes
 | Env var | Default | Purpose |
 |---|---|---|
 | `CLAW_MESSENGER_API_KEY` | — | **Required.** From clawmessenger.com/dashboard. |
-| `CLAW_MESSENGER_SERVER_URL` | `wss://claw-messenger.onrender.com` | WebSocket URL of the relay. |
+| `CLAW_MESSENGER_SERVER_URL` | `wss://claw-messenger.onrender.com` | WebSocket URL of the Claw Messenger service. |
 | `CLAW_MESSENGER_PREFERRED_SERVICE` | `iMessage` | `iMessage` / `RCS` / `SMS`. |
 | `CLAW_MESSENGER_ALLOWED_USERS` | — | Comma-separated allowlist (E.164 phones or group chatIds). |
 | `CLAW_MESSENGER_ALLOW_ALL_USERS` | `false` | If `true`, any sender can talk to the bot. |
@@ -102,13 +124,13 @@ When `hermes cron run` executes in a separate process from `hermes gateway`, the
 ## Development
 
 ```bash
-git clone https://github.com/emotion-machine-org/hermes-imessage.git
+git clone https://github.com/tin-computer/hermes-imessage.git
 cd hermes-imessage
 pip install -e ".[dev]"
-pytest tests/                              # 41 unit tests, ~7s
+pytest tests/                              # 45 unit tests, ~9s
 ```
 
-Live smoke test against the production relay (needs a real API key):
+Live smoke test against the production service (needs a real API key):
 
 ```bash
 CLAW_MESSENGER_API_KEY=cm_live_… python -c "
@@ -120,12 +142,19 @@ asyncio.run(standalone_send(PlatformConfig(enabled=True, extra={}),
 "
 ```
 
+## What this plugin does on your machine
+
+- Keeps one authenticated WebSocket open to the Claw Messenger service (`wss://claw-messenger.onrender.com` by default) while the gateway runs, and sends and receives your messages over it. Message text, phone numbers and attachments pass through Claw Messenger, which is how they reach phones.
+- Downloads inbound attachments over HTTPS into Hermes's media cache.
+- Reads `CLAW_MESSENGER_*` settings through Hermes (`get_secret`). `hermes gateway setup` saves them with Hermes's own `.env` writer; settings in `config.yaml` are copied into the process environment at startup.
+- Opens a short-lived connection for cron deliveries when the gateway runs in another process.
+- Runs no shell commands, sends no telemetry and reads no files outside its own.
+
 ## Naming note
 
-The PyPI package is `hermes-imessage` for discoverability. The internal Python module
-is `hermes_claw_messenger` (matching the underlying Claw Messenger relay's brand) and
-the Hermes platform identifier is `claw_messenger`. Both can appear in logs and config —
-they are the same plugin.
+The catalog entry is `claw-messenger` and the PyPI package is `hermes-imessage`. The
+Python module is `hermes_claw_messenger` and the Hermes platform identifier is
+`claw_messenger`. All of these can appear in logs and config; they are the same plugin.
 
 ## License
 
