@@ -77,19 +77,6 @@ def _coerce_args(arguments: Any) -> Dict[str, Any]:
 
 def _get_running_adapter():
     """Return the live ClawMessengerAdapter or None."""
-    try:
-        from gateway.run import _gateway_runner_ref
-    except Exception:
-        return None
-    try:
-        runner = _gateway_runner_ref()
-    except Exception:
-        return None
-    if runner is None:
-        return None
-    try:
-        from gateway.config import Platform
-        platform = Platform("claw_messenger")
-    except Exception:
-        return None
-    return runner.adapters.get(platform)
+    from .adapter import running_adapter
+
+    return running_adapter()

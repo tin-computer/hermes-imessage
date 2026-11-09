@@ -1,12 +1,15 @@
-name: imessage
+name: claw-messenger
 label: iMessage / RCS / SMS
 kind: platform
-version: 0.1.0
+version: 0.1.4
+requires_hermes: ">=0.23.0"
 description: >
-  iMessage, RCS & SMS for Hermes Agent — powered by the Claw Messenger relay
-  (https://clawmessenger.com). Talk to real phones from your Hermes agent;
-  no Mac and no SIM required.
+  iMessage, RCS and SMS for Hermes Agent through Claw Messenger
+  (https://www.clawmessenger.com). Your agent texts real phones and gets
+  replies; no Mac and no SIM required.
 author: Emotion Machine
+provides_tools:
+  - claw_messenger_create_group
 requires_env:
   - name: CLAW_MESSENGER_API_KEY
     description: "Claw Messenger API key"
