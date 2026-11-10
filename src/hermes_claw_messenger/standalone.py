@@ -71,7 +71,10 @@ async def standalone_send(
         server_url=server_url, api_key=api_key,
         on_message=_noop, oneshot=True,
     )
-    await client.start()
+    try:
+        await client.start()
+    except ValueError as exc:
+        return {"error": str(exc)}
     try:
         import asyncio
         try:

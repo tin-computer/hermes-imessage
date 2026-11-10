@@ -9,6 +9,7 @@ Your Hermes agent can:
 - Send to one-on-one chats and existing group chats.
 - Create new group chats with the `claw_messenger_create_group` tool (Growth plan and above).
 - Receive image, video, audio and document attachments as local files the agent's vision tools can read.
+- Send images, audio, video and documents that are hosted at an `http(s)` URL. Claw Messenger doesn't take file uploads, so for a local file Hermes tells the user it couldn't be attached.
 
 You need a Claw Messenger account and API key. Plans and limits are on the [pricing page](https://www.clawmessenger.com/pricing); first-time customers get a 7-day trial (card required).
 
@@ -127,7 +128,7 @@ When `hermes cron run` executes in a separate process from `hermes gateway`, the
 git clone https://github.com/tin-computer/hermes-imessage.git
 cd hermes-imessage
 pip install -e ".[dev]"
-pytest tests/                              # 45 unit tests, ~9s
+pytest tests/                              # 63 unit tests, ~10s
 ```
 
 Live smoke test against the production service (needs a real API key):
@@ -145,7 +146,8 @@ asyncio.run(standalone_send(PlatformConfig(enabled=True, extra={}),
 ## What this plugin does on your machine
 
 - Keeps one authenticated WebSocket open to the Claw Messenger service (`wss://claw-messenger.onrender.com` by default) while the gateway runs, and sends and receives your messages over it. Message text, phone numbers and attachments pass through Claw Messenger, which is how they reach phones.
-- Downloads inbound attachments over HTTPS into Hermes's media cache.
+- Downloads inbound attachments over HTTPS only, up to 20 MB each, into Hermes's media cache.
+- Connects only over TLS (`wss://` or `https://`). Plain `ws://` or `http://` server URLs are refused unless the host is localhost, because the API key is sent on connect.
 - Reads `CLAW_MESSENGER_*` settings through Hermes (`get_secret`). `hermes gateway setup` saves them with Hermes's own `.env` writer; settings in `config.yaml` are copied into the process environment at startup.
 - Opens a short-lived connection for cron deliveries when the gateway runs in another process.
 - Runs no shell commands, sends no telemetry and reads no files outside its own.

@@ -12,6 +12,7 @@ import asyncio
 import logging
 import weakref
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import httpx
 
@@ -43,6 +44,10 @@ DEFAULT_PREFERRED_SERVICE = "iMessage"
 DEFAULT_REQUEST_TIMEOUT_S = 30.0
 DEFAULT_MEDIA_DOWNLOAD_TIMEOUT_S = 30.0
 MAX_INBOUND_MEDIA_SIZE = 20 * 1024 * 1024  # 20MB
+
+
+def _is_web_url(value: str) -> bool:
+    return urlparse(str(value or "")).scheme.lower() in ("http", "https")
 MAX_MESSAGE_LENGTH = 10000
 
 # Map MIME type prefix → MessageType
@@ -140,15 +145,20 @@ class ClawMessengerAdapter(BasePlatformAdapter):
             )
             return False
 
-        self._http = httpx.AsyncClient(timeout=DEFAULT_MEDIA_DOWNLOAD_TIMEOUT_S)
-        self._ws = WsClient(
+        ws = WsClient(
             server_url=self.server_url,
             api_key=self.api_key,
             on_message=self._handle_ws_frame,
             on_connect=self._on_ws_connect,
             on_disconnect=self._on_ws_disconnect,
         )
-        await self._ws.start()
+        try:
+            await ws.start()
+        except ValueError as exc:
+            self._set_fatal_error("invalid_server_url", str(exc), retryable=False)
+            return False
+        self._ws = ws
+        self._http = httpx.AsyncClient(timeout=DEFAULT_MEDIA_DOWNLOAD_TIMEOUT_S)
         try:
             await asyncio.wait_for(self._ws.connected_event.wait(), timeout=20.0)
         except asyncio.TimeoutError:
@@ -247,17 +257,47 @@ class ClawMessengerAdapter(BasePlatformAdapter):
         except Exception:
             logger.debug("claw_messenger: typing.start send failed", exc_info=True)
 
-    async def send_image(self, chat_id, image_url, caption=None) -> SendResult:
+    # Core calls these by keyword with the base-class parameter names. Claw
+    # only takes media as a hosted URL (it has no upload API), so a local path
+    # goes to the base class, which tells the user it couldn't be attached.
+
+    async def send_image(
+        self, chat_id: str, image_url: str, caption: Optional[str] = None,
+        reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        if not _is_web_url(image_url):
+            return await super().send_image_file(
+                chat_id, image_url, caption=caption, reply_to=reply_to, metadata=metadata)
         return await self._send_media(chat_id, image_url, caption)
 
-    async def send_video(self, chat_id, video_url, caption=None) -> SendResult:
-        return await self._send_media(chat_id, video_url, caption)
+    async def send_voice(
+        self, chat_id: str, audio_path: str, caption: Optional[str] = None,
+        reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs,
+    ) -> SendResult:
+        if not _is_web_url(audio_path):
+            return await super().send_voice(
+                chat_id, audio_path, caption=caption, reply_to=reply_to, metadata=metadata, **kwargs)
+        return await self._send_media(chat_id, audio_path, caption)
 
-    async def send_voice(self, chat_id, voice_url, caption=None) -> SendResult:
-        return await self._send_media(chat_id, voice_url, caption)
+    async def send_video(
+        self, chat_id: str, video_path: str, caption: Optional[str] = None,
+        reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs,
+    ) -> SendResult:
+        if not _is_web_url(video_path):
+            return await super().send_video(
+                chat_id, video_path, caption=caption, reply_to=reply_to, metadata=metadata, **kwargs)
+        return await self._send_media(chat_id, video_path, caption)
 
-    async def send_document(self, chat_id, document_url, caption=None) -> SendResult:
-        return await self._send_media(chat_id, document_url, caption)
+    async def send_document(
+        self, chat_id: str, file_path: str, caption: Optional[str] = None,
+        file_name: Optional[str] = None, reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None, **kwargs,
+    ) -> SendResult:
+        if not _is_web_url(file_path):
+            return await super().send_document(
+                chat_id, file_path, caption=caption, file_name=file_name,
+                reply_to=reply_to, metadata=metadata, **kwargs)
+        return await self._send_media(chat_id, file_path, caption)
 
     async def _send_media(
         self,
@@ -408,25 +448,41 @@ class ClawMessengerAdapter(BasePlatformAdapter):
             mime = str(att.get("mimeType") or "").strip() or None
             if not url:
                 continue
-            try:
-                resp = await self._http.get(url)
-                resp.raise_for_status()
-            except Exception as exc:
-                logger.warning("claw_messenger: failed to download attachment %s: %s", url, exc)
+            if urlparse(url).scheme.lower() != "https":
+                logger.warning("claw_messenger: skipping non-https attachment %s", url)
                 continue
-            content_type = mime or resp.headers.get("content-type") or "application/octet-stream"
-            data = resp.content
-            if len(data) > MAX_INBOUND_MEDIA_SIZE:
-                logger.warning(
-                    "claw_messenger: attachment %s exceeds %d bytes — skipping",
-                    url, MAX_INBOUND_MEDIA_SIZE,
-                )
+            fetched = await self._fetch_capped(url)
+            if fetched is None:
                 continue
+            data, served_type = fetched
+            content_type = mime or served_type or "application/octet-stream"
             stored_path = await self._cache_blob(data, content_type)
             if stored_path:
                 urls.append(stored_path)
                 types.append(content_type)
         return urls, types
+
+    async def _fetch_capped(self, url: str) -> Optional[Tuple[bytes, Optional[str]]]:
+        """Stream ``url`` and stop once it passes MAX_INBOUND_MEDIA_SIZE."""
+        chunks: List[bytes] = []
+        size = 0
+        try:
+            async with self._http.stream("GET", url) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_INBOUND_MEDIA_SIZE:
+                        logger.warning(
+                            "claw_messenger: attachment %s exceeds %d bytes — skipping",
+                            url, MAX_INBOUND_MEDIA_SIZE,
+                        )
+                        return None
+                    chunks.append(chunk)
+                content_type = resp.headers.get("content-type")
+        except Exception as exc:
+            logger.warning("claw_messenger: failed to download attachment %s: %s", url, exc)
+            return None
+        return b"".join(chunks), content_type
 
     async def _cache_blob(self, blob: bytes, content_type: str) -> Optional[str]:
         try:

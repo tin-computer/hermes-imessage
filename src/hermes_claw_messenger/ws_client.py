@@ -20,6 +20,7 @@ Reconnect policy:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import random
@@ -34,6 +35,17 @@ from websockets import State
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _is_loopback(host: Optional[str]) -> bool:
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _client_id() -> str:
@@ -116,6 +128,7 @@ class WsClient:
         """Spawn the connect loop (does not block)."""
         if self._main_task is not None and not self._main_task.done():
             return
+        self._build_url()  # raises ValueError for a bad or unencrypted URL; no retry loop
         self._stopped = False
         self._main_task = asyncio.create_task(self._connect_loop(), name="ws_client.connect_loop")
 
@@ -193,6 +206,12 @@ class WsClient:
             raise ValueError(f"Unsupported scheme {parsed.scheme!r}")
         if not scheme:
             scheme = "wss"
+        # The API key rides in the query string, so plaintext is loopback-only.
+        if scheme == "ws" and not _is_loopback(parsed.hostname):
+            raise ValueError(
+                f"Refusing unencrypted server URL {parsed.scheme}://{parsed.hostname}; "
+                "use https:// or wss:// (plain ws/http is allowed only for localhost)"
+            )
 
         path = parsed.path or ""
         if not path.endswith("/ws"):
