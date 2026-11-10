@@ -1,7 +1,7 @@
 name: claw-messenger
 label: iMessage / RCS / SMS
 kind: platform
-version: 0.1.4
+version: 0.1.5
 requires_hermes: ">=0.23.0"
 description: >
   iMessage, RCS and SMS for Hermes Agent through Claw Messenger

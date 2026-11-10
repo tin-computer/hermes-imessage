@@ -183,3 +183,33 @@ async def test_stop_rejects_pending_requests(fake_server):
         await client.stop()
         with pytest.raises(Exception):
             await task
+
+
+async def _noop(_data):
+    return None
+
+
+@pytest.mark.parametrize("url", [
+    "ws://relay.example.com",
+    "http://relay.example.com",
+    "http://10.0.0.5:8080",
+])
+@pytest.mark.asyncio
+async def test_unencrypted_remote_url_is_refused_before_connecting(url):
+    client = WsClient(server_url=url, api_key="cm_live_SECRET", on_message=_noop)
+    with pytest.raises(ValueError) as exc:
+        await client.start()
+    assert "cm_live_SECRET" not in str(exc.value)
+    assert client._main_task is None
+
+
+@pytest.mark.parametrize("url", [
+    "ws://127.0.0.1:9999",
+    "http://localhost:8080",
+    "ws://[::1]:9999",
+    "https://relay.example.com",
+    "wss://relay.example.com",
+])
+def test_encrypted_or_loopback_urls_are_allowed(url):
+    client = WsClient(server_url=url, api_key="k", on_message=_noop)
+    assert "key=k" in client._build_url()

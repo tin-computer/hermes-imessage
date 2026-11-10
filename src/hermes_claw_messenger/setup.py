@@ -82,12 +82,11 @@ def _yaml_env_setter():
 def interactive_setup(*args, **kwargs) -> bool:
     """Walk a user through configuring the plugin.
 
-    Called by ``hermes gateway setup``. Signature is intentionally flexible —
-    Hermes versions have evolved this contract over time; we accept whatever it
-    passes and look for the ``console`` and ``env_path`` we need.
+    Called by ``hermes gateway setup`` with no arguments. An optional
+    ``console`` (anything with ``print``) is still accepted for older callers.
+    Values are saved through Hermes' own ``.env`` writer.
     """
     console = kwargs.get("console") or (args[0] if args else None)
-    env_path = kwargs.get("env_path") or (args[1] if len(args) > 1 else None)
 
     def out(msg: str) -> None:
         if console is not None and hasattr(console, "print"):
@@ -118,27 +117,11 @@ def interactive_setup(*args, **kwargs) -> bool:
         "CLAW_MESSENGER_PREFERRED_SERVICE": service,
         **({"CLAW_MESSENGER_HOME_CHANNEL": home} if home else {}),
     }
-    if env_path is None:
-        # Hermes owns ~/.hermes/.env (profiles, export lines, write guards).
-        from hermes_cli.config import save_env_value
-        for key, value in values.items():
-            save_env_value(key, value)
-    else:
-        _append_env_lines(env_path, values)
+    # Hermes owns ~/.hermes/.env (profiles, export lines, write guards).
+    from hermes_cli.config import save_env_value
+    for key, value in values.items():
+        save_env_value(key, value)
     out("[green]✓ Claw Messenger configured.[/green]")
     out("[dim]Next: register phone numbers via the dashboard or the /api/phone-routes endpoint.[/dim]")
     return True
 
-
-def _append_env_lines(env_path, values: Dict[str, str]) -> None:
-    from pathlib import Path
-
-    env_path = Path(env_path)
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = env_path.read_text() if env_path.exists() else ""
-
-    # Strip any prior settings of the same keys so we don't accumulate dupes.
-    lines = existing.splitlines()
-    kept = [line for line in lines if not any(line.startswith(f"{k}=") for k in values)]
-    kept.extend(f"{k}={v}" for k, v in values.items())
-    env_path.write_text("\n".join(kept) + "\n")
